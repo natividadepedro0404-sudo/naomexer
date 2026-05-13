@@ -121,55 +121,64 @@ def create_pix_qrcode(amount):
     """Gera QR Code PIX via MisticPay usando headers ci/cs"""
     print(f"[MisticPay] Criando PIX de R$ {amount}")
     
-    # Headers corretos da MisticPay
     headers = {
         "ci": CLIENT_ID,
         "cs": CLIENT_SECRET,
         "Content-Type": "application/json"
     }
     
-    # Payload conforme documentação (ajuste os campos conforme necessário)
     payload = {
         "amount": amount,
-        "description": f"Recarga de saldo - R$ {amount:.2f}",
-        "callback_url": "https://naomexer-602p.onrender.com/pix_callback"  # Opcional
+        "description": f"Recarga de saldo - R$ {amount:.2f}"
     }
     
     try:
-        # Endpoint para criar PIX (ajuste conforme documentação)
+        # Tenta diferentes endpoints
         response = requests.post(
-            f"{BASE_URL}/pix/create",  # ou "/pix", "/v1/pix" - verifique na doc
+            f"{BASE_URL}/pix/create",
             json=payload,
             headers=headers,
             timeout=30
         )
         
-        print(f"[MisticPay] Resposta status: {response.status_code}")
-        print(f"[MisticPay] Resposta body: {response.text}")
+        print(f"[MisticPay] Status: {response.status_code}")
         
         if response.status_code in [200, 201]:
             data = response.json()
-            
-            # Ajuste os campos conforme o retorno real da API
             return {
                 "success": True,
-                "qr_code": data.get("qr_code") or data.get("qrcode") or data.get("qrCode"),
-                "copy_paste": data.get("copy_paste") or data.get("brcode") or data.get("pix_code"),
-                "transaction_id": data.get("id") or data.get("transaction_id") or data.get("tid"),
+                "qr_code": data.get("qr_code") or data.get("qrcode"),
+                "copy_paste": data.get("copy_paste") or data.get("brcode"),
+                "transaction_id": data.get("id") or data.get("transaction_id"),
                 "amount": amount
             }
         else:
-            return {
-                "success": False, 
-                "error": f"Erro {response.status_code}: {response.text}"
-            }
+            # Tenta endpoint alternativo
+            response2 = requests.post(
+                f"{BASE_URL}/pix",
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+            
+            if response2.status_code in [200, 201]:
+                data = response2.json()
+                return {
+                    "success": True,
+                    "qr_code": data.get("qr_code") or data.get("qrcode"),
+                    "copy_paste": data.get("copy_paste") or data.get("brcode"),
+                    "transaction_id": data.get("id") or data.get("transaction_id"),
+                    "amount": amount
+                }
+            
+            return {"success": False, "error": f"Erro: {response.status_code}"}
             
     except Exception as e:
-        print(f"[MisticPay] Exceção: {e}")
+        print(f"[MisticPay] Erro: {e}")
         return {"success": False, "error": str(e)}
 
 def check_pix_status(transaction_id):
-    """Verifica status do PIX na MisticPay"""
+    """Verifica status do PIX"""
     headers = {
         "ci": CLIENT_ID,
         "cs": CLIENT_SECRET,
@@ -178,7 +187,7 @@ def check_pix_status(transaction_id):
     
     try:
         response = requests.get(
-            f"{BASE_URL}/pix/status/{transaction_id}",  # Ajuste endpoint
+            f"{BASE_URL}/pix/status/{transaction_id}",
             headers=headers,
             timeout=30
         )
@@ -186,13 +195,11 @@ def check_pix_status(transaction_id):
         if response.status_code == 200:
             data = response.json()
             status = data.get("status")
-            is_paid = status in ["paid", "confirmed", "approved", "completed"]
-            return is_paid, data
+            return status in ["paid", "confirmed", "approved"], data
         return False, {}
-        
     except Exception as e:
-        print(f"[MisticPay] Erro ao verificar status: {e}")
-        return False, {"error": str(e)}
+        print(f"[MisticPay] Erro status: {e}")
+        return False, {}
 
 # ========= COMANDOS DO BOT =========
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -222,7 +229,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         welcome_message,
-        parse_mode='Markdown',
         reply_markup=reply_markup
     )
 async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -231,8 +237,7 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         await update.message.reply_text(
-            "❌ *Uso correto:* /pix 10\n\nValor mínimo: R$ 10,00",
-            parse_mode='Markdown'  # ← Este é o problema
+            "❌ Uso correto: /pix 10\n\nValor mínimo: R$ 10,00"
         )
         return
     
@@ -241,22 +246,19 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if amount < 10:
             await update.message.reply_text(
-                "❌ *Valor mínimo é R$ 10,00*",
-                parse_mode='Markdown'
+                "❌ Valor mínimo é R$ 10,00"
             )
             return
         
         await update.message.reply_text(
-            f"⏳ *Gerando QR Code PIX...*\n💰 Valor: R$ {amount:.2f}",
-            parse_mode='Markdown'
+            f"⏳ Gerando QR Code PIX...\n💰 Valor: R$ {amount:.2f}"
         )
         
         pix_data = create_pix_qrcode(amount)
         
         if not pix_data["success"]:
             await update.message.reply_text(
-                f"❌ *Erro ao gerar PIX:*\n{pix_data.get('error', 'Erro desconhecido')}",
-                parse_mode='Markdown'
+                f"❌ Erro ao gerar PIX:\n{pix_data.get('error', 'Erro desconhecido')}"
             )
             return
         
@@ -282,8 +284,7 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pix_data["qr_code"].startswith("http"):
                 await update.message.reply_photo(
                     photo=pix_data["qr_code"],
-                    caption=message,
-                    parse_mode='Markdown'
+                    caption=message
                 )
             else:
                 img = qrcode.make(pix_data["copy_paste"])
@@ -292,16 +293,15 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bio.seek(0)
                 await update.message.reply_photo(
                     photo=bio,
-                    caption=message,
-                    parse_mode='Markdown'
+                    caption=message
                 )
         except:
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message)
         
         asyncio.create_task(check_pix_payment(pix_data["transaction_id"], user.id, amount, context))
         
     except ValueError:
-        await update.message.reply_text("❌ *Valor inválido!*", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Valor inválido!*")
 
 async def check_pix_payment(transaction_id, user_id, amount, context):
     """Verifica pagamento PIX em background"""
@@ -315,8 +315,7 @@ async def check_pix_payment(transaction_id, user_id, amount, context):
             
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"✅ *Pagamento Confirmado!*\n\n💰 R$ {amount:.2f} adicionados ao saldo!",
-                parse_mode='Markdown'
+                text=f"✅ *Pagamento Confirmado!*\n\n💰 R$ {amount:.2f} adicionados ao saldo!"
             )
             
             pending = load_json(PENDING_PIX_FILE)
@@ -329,8 +328,7 @@ async def check_pix_payment(transaction_id, user_id, amount, context):
     
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"⏰ *Tempo esgotado!* O PIX não foi pago.",
-        parse_mode='Markdown'
+        text=f"⏰ *Tempo esgotado!* O PIX não foi pago."
     )
 
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -340,8 +338,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         await update.message.reply_text(
-            "❌ *Uso:* `/chk NUMERO|MES|ANO|CVV|NOME|CPF`",
-            parse_mode='Markdown'
+            "❌ *Uso:* `/chk NUMERO|MES|ANO|CVV|NOME|CPF`"
         )
         return
     
@@ -349,12 +346,11 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if user_data['balance'] < 0.5:
         await update.message.reply_text(
-            f"❌ *Saldo insuficiente!* R$ {user_data['balance']:.2f}",
-            parse_mode='Markdown'
+            f"❌ *Saldo insuficiente!* R$ {user_data['balance']:.2f}"
         )
         return
     
-    msg = await update.message.reply_text("⏳ *Verificando...*", parse_mode='Markdown')
+    msg = await update.message.reply_text("⏳ *Verificando...*")
     
     is_live, result = check_card(card_data)
     cost = 1.0 if is_live else 0.5
@@ -376,8 +372,7 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(
         f"{status_text}\n\n"
         f"💰 Custo: R$ {cost:.2f}\n"
-        f"💵 Saldo: R$ {users[user_id_str]['balance']:.2f}",
-        parse_mode='Markdown'
+        f"💵 Saldo: R$ {users[user_id_str]['balance']:.2f}"
     )
 
 async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -386,8 +381,7 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not update.message.document:
         await update.message.reply_text(
-            "❌ *Envie um arquivo .txt junto com o comando*",
-            parse_mode='Markdown'
+            "❌ *Envie um arquivo .txt junto com o comando*"
         )
         return
     
@@ -411,8 +405,7 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     msg = await update.message.reply_text(
-        f"📁 Processando {len(cards)} cartões...\n💰 Saldo: R$ {user_data['balance']:.2f}",
-        parse_mode='Markdown'
+        f"📁 Processando {len(cards)} cartões...\n💰 Saldo: R$ {user_data['balance']:.2f}"
     )
     
     live_cards = []
@@ -436,8 +429,7 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if (i + 1) % 10 == 0:
             await msg.edit_text(
                 f"📊 Progresso: {processed}/{len(cards)}\n✅ Live: {len(live_cards)}\n"
-                f"💰 Saldo: R$ {current_user.get('balance', 0):.2f}",
-                parse_mode='Markdown'
+                f"💰 Saldo: R$ {current_user.get('balance', 0):.2f}"
             )
         
         await asyncio.sleep(0.5)
@@ -461,20 +453,20 @@ async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if not context.args:
-        await update.message.reply_text("❌ *Uso:* `/resgatar CODIGO`", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Uso:* `/resgatar CODIGO`")
         return
     
     code = context.args[0]
     codes = load_json(CODES_FILE)
     
     if code not in codes:
-        await update.message.reply_text("❌ *Código inválido!*", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Código inválido!*")
         return
     
     code_data = codes[code]
     
     if code_data.get("used", False):
-        await update.message.reply_text("❌ *Código já usado!*", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Código já usado!*")
         return
     
     amount = code_data["value"]
@@ -486,8 +478,7 @@ async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_json(CODES_FILE, codes)
     
     await update.message.reply_text(
-        f"✅ *Resgatado R$ {amount:.2f}!*\n💰 Saldo: R$ {load_json(USERS_FILE)[str(user.id)]['balance']:.2f}",
-        parse_mode='Markdown'
+        f"✅ *Resgatado R$ {amount:.2f}!*\n💰 Saldo: R$ {load_json(USERS_FILE)[str(user.id)]['balance']:.2f}"
     )
 
 async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -495,11 +486,11 @@ async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ *Acesso negado!*", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Acesso negado!*")
         return
     
     if not context.args:
-        await update.message.reply_text("❌ *Uso:* `/gerarcod 50`", parse_mode='Markdown')
+        await update.message.reply_text("❌ *Uso:* `/gerarcod 50`")
         return
     
     try:
@@ -516,11 +507,10 @@ async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json(CODES_FILE, codes)
         
         await update.message.reply_text(
-            f"✅ *Código gerado!*\n💰 Valor: R$ {amount:.2f}\n🎫 `{code}`",
-            parse_mode='Markdown'
+            f"✅ *Código gerado!*\n💰 Valor: R$ {amount:.2f}\n🎫 `{code}`"
         )
     except ValueError:
-        await update.message.reply_text("❌ Valor inválido!", parse_mode='Markdown')
+        await update.message.reply_text("❌ Valor inválido!")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processa botões inline"""
@@ -532,35 +522,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "balance":
         await query.edit_message_text(
-            f"💰 *Saldo:* R$ {user_data['balance']:.2f}",
-            parse_mode='Markdown'
+            f"💰 *Saldo:* R$ {user_data['balance']:.2f}"
         )
     elif query.data == "stats":
         await query.edit_message_text(
             f"📊 *Estatísticas*\n\n✅ Live: {user_data['live_checks']}\n"
             f"❌ Die: {user_data['die_checks']}\n"
-            f"📈 Total: {user_data['total_checked']}",
-            parse_mode='Markdown'
+            f"📈 Total: {user_data['total_checked']}"
         )
     elif query.data == "check":
         await query.edit_message_text(
-            f"💳 *Verificar Cartão*\n\n`/chk NUMERO|MES|ANO|CVV|NOME|CPF`",
-            parse_mode='Markdown'
+            f"💳 *Verificar Cartão*\n\n`/chk NUMERO|MES|ANO|CVV|NOME|CPF`"
         )
     elif query.data == "file_check":
         await query.edit_message_text(
-            f"📁 *Verificar Arquivo*\n\nEnvie um arquivo .txt com `/mchk`",
-            parse_mode='Markdown'
+            f"📁 *Verificar Arquivo*\n\nEnvie um arquivo .txt com `/mchk`"
         )
     elif query.data == "pix_recharge":
         await query.edit_message_text(
-            f"💸 *Recarregar via PIX*\n\n`/pix valor`\nMínimo: R$ 10,00",
-            parse_mode='Markdown'
+            f"💸 *Recarregar via PIX*\n\n`/pix valor`\nMínimo: R$ 10,00"
         )
     elif query.data == "redeem":
         await query.edit_message_text(
-            f"🎫 *Resgatar Código*\n\n`/resgatar CODIGO`",
-            parse_mode='Markdown'
+            f"🎫 *Resgatar Código*\n\n`/resgatar CODIGO`"
         )
 
 # ========= FLASK PARA KEEP ALIVE =========
