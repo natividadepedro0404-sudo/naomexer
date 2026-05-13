@@ -23,7 +23,7 @@ ADMIN_ID = 8467946444  # Seu ID do Telegram
 CLIENT_ID = "ci_libdweclsjyry50"
 CLIENT_SECRET = "cs_kknlfy76fe2ir4nqjydf8ebee"
 PIX_URL = "https://api.misticpay.com/v1/pix"
-
+BASE_URL = "https://api.misticpay.com/api"
 # URLs da sua API de checkout
 # ⚠️ ATENÇÃO: Esta URL precisa ser alterada quando você hospedar a API PHP
 CHECKOUT_API_URL = "https://naomexer-602p.onrender.com/api.php"
