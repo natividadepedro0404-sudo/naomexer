@@ -6,6 +6,8 @@ import threading
 import asyncio
 import requests
 import time
+import os
+from supabase import create_client, Client
 import qrcode
 from io import BytesIO
 from datetime import datetime
@@ -30,6 +32,84 @@ USERS_FILE = "users.json"
 CODES_FILE = "codes.json"
 TRANSACTIONS_FILE = "transactions.json"
 PENDING_PIX_FILE = "pending_pix.json"
+
+# ========= CONFIGURAÇÃO SUPABASE =========
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ Erro: SUPABASE_URL e SUPABASE_KEY não configurados!")
+    exit(1)
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+print("✅ Conectado ao Supabase!")
+
+# ========= FUNÇÕES DE ACESSO AO BANCO =========
+
+def init_user(user_id, username, first_name):
+    """Inicializa um novo usuário no Supabase"""
+    try:
+        # Verificar se usuário já existe
+        response = supabase.table('users').select('*').eq('id', user_id).execute()
+        
+        if not response.data:
+            # Criar novo usuário
+            new_user = {
+                'id': user_id,
+                'username': username,
+                'first_name': first_name,
+                'balance': 0.0,
+                'total_checked': 0,
+                'live_checks': 0,
+                'die_checks': 0,
+                'created_at': datetime.now().isoformat(),
+                'last_activity': datetime.now().isoformat()
+            }
+            supabase.table('users').insert(new_user).execute()
+            return new_user
+        
+        return response.data[0]
+        
+    except Exception as e:
+        print(f"❌ Erro init_user: {e}")
+        return None
+
+def update_balance(user_id, amount, operation_type, details=""):
+    """Atualiza o saldo do usuário no Supabase"""
+    try:
+        # Buscar usuário
+        user_response = supabase.table('users').select('*').eq('id', user_id).execute()
+        
+        if not user_response.data:
+            return False
+        
+        user = user_response.data[0]
+        old_balance = user.get('balance', 0)
+        new_balance = old_balance + amount
+        
+        # Atualizar saldo
+        supabase.table('users').update({
+            'balance': new_balance,
+            'last_activity': datetime.now().isoformat()
+        }).eq('id', user_id).execute()
+        
+        # Registrar transação
+        supabase.table('transactions').insert({
+            'user_id': user_id,
+            'amount': amount,
+            'type': operation_type,
+            'details': details,
+            'balance_before': old_balance,
+            'balance_after': new_balance,
+            'created_at': datetime.now().isoformat()
+        }).execute()
+        
+        print(f"✅ Saldo atualizado: {user_id} → R$ {new_balance:.2f}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Erro update_balance: {e}")
+        return False
 
 # ========= FUNÇÕES AUXILIARES =========
 def load_json(file_path):
@@ -83,6 +163,9 @@ def update_balance(user_id, amount, operation_type, details=""):
     return True
 
 def generate_code(length=20):
+    """Gera código aleatório"""
+    import random
+    import string
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
 
@@ -507,18 +590,12 @@ async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /gerarcod + valor (APENAS ADMIN)"""
     user = update.effective_user
     
-    # Verificar se é admin
     if user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Acesso negado! Apenas o administrador pode usar este comando.")
+        await update.message.reply_text("❌ Acesso negado!")
         return
     
-    # Verificar se forneceu o valor
     if not context.args:
-        await update.message.reply_text(
-            "❌ Uso correto: /gerarcod VALOR\n\n"
-            "Exemplo: /gerarcod 50\n\n"
-            "Gera um código de recarga com o valor especificado."
-        )
+        await update.message.reply_text("❌ Uso: /gerarcod VALOR")
         return
     
     try:
@@ -528,111 +605,126 @@ async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Valor deve ser maior que zero!")
             return
         
-        # Gerar código aleatório de 20 caracteres
         code = generate_code(20)
         
-        # Carregar códigos existentes
-        codes = load_json(CODES_FILE)
+        # Salvar no Supabase
+        supabase.table('codes').insert({
+            'code': code,
+            'value': amount,
+            'created_by': user.id,
+            'created_by_name': user.first_name,
+            'created_at': datetime.now().isoformat(),
+            'used': False
+        }).execute()
         
-        # Salvar novo código
-        codes[code] = {
-            "value": amount,
-            "created_by": user.id,
-            "created_by_name": user.first_name,
-            "created_at": datetime.now().isoformat(),
-            "used": False,
-            "used_by": None,
-            "used_at": None
-        }
-        save_json(CODES_FILE, codes)
-        
-        # Mostrar código para o admin
         await update.message.reply_text(
-            f"✅ Código gerado com sucesso!\n\n"
+            f"✅ Código gerado!\n\n"
             f"💰 Valor: R$ {amount:.2f}\n"
             f"🎫 Código: `{code}`\n\n"
-            f"📋 Instruções:\n"
-            f"1. Envie este código para o usuário\n"
-            f"2. O usuário deve usar: `/resgatar {code}`\n\n"
-            f"⚠️ O código só pode ser usado uma vez.",
+            f"Use: `/resgatar {code}`",
             parse_mode='Markdown'
         )
         
     except ValueError:
-        await update.message.reply_text("❌ Valor inválido! Digite um número.")
+        await update.message.reply_text("❌ Valor inválido!")
 
 async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /resgatar + codigo"""
     user = update.effective_user
     
-    # Verificar se forneceu o código
     if not context.args:
-        await update.message.reply_text(
-            "❌ Uso correto: /resgatar CODIGO\n\n"
-            "Exemplo: /resgatar aB3dE5fG7hI9jK1lM2nO\n\n"
-            "Resgata o valor de um código de recarga."
-        )
+        await update.message.reply_text("❌ Uso: /resgatar CODIGO")
         return
     
     code = context.args[0]
     
-    # Carregar códigos
-    codes = load_json(CODES_FILE)
-    
-    # Verificar se código existe
-    if code not in codes:
+    try:
+        # Buscar código no Supabase
+        response = supabase.table('codes').select('*').eq('code', code).execute()
+        
+        if not response.data:
+            await update.message.reply_text("❌ Código inválido!")
+            return
+        
+        code_data = response.data[0]
+        
+        if code_data.get('used', False):
+            await update.message.reply_text(f"❌ Código já usado em {code_data.get('used_at', '')[:10]}")
+            return
+        
+        amount = code_data['value']
+        
+        # Adicionar saldo
+        update_balance(user.id, amount, "resgate", f"Código: {code}")
+        
+        # Marcar código como usado
+        supabase.table('codes').update({
+            'used': True,
+            'used_by': user.id,
+            'used_by_name': user.first_name,
+            'used_at': datetime.now().isoformat()
+        }).eq('code', code).execute()
+        
+        # Buscar saldo atual
+        user_data = supabase.table('users').select('balance').eq('id', user.id).execute()
+        current_balance = user_data.data[0]['balance'] if user_data.data else 0
+        
         await update.message.reply_text(
-            "❌ Código inválido!\n\n"
-            "Verifique o código e tente novamente."
+            f"✅ Resgatado R$ {amount:.2f}!\n"
+            f"💰 Saldo atual: R$ {current_balance:.2f}"
         )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erro: {e}")
+
+async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /resgatar + codigo"""
+    user = update.effective_user
+    
+    if not context.args:
+        await update.message.reply_text("❌ Uso: /resgatar CODIGO")
         return
     
-    code_data = codes[code]
+    code = context.args[0]
     
-    # Verificar se já foi usado
-    if code_data.get("used", False):
+    try:
+        # Buscar código no Supabase
+        response = supabase.table('codes').select('*').eq('code', code).execute()
+        
+        if not response.data:
+            await update.message.reply_text("❌ Código inválido!")
+            return
+        
+        code_data = response.data[0]
+        
+        if code_data.get('used', False):
+            await update.message.reply_text(f"❌ Código já usado em {code_data.get('used_at', '')[:10]}")
+            return
+        
+        amount = code_data['value']
+        
+        # Adicionar saldo
+        update_balance(user.id, amount, "resgate", f"Código: {code}")
+        
+        # Marcar código como usado
+        supabase.table('codes').update({
+            'used': True,
+            'used_by': user.id,
+            'used_by_name': user.first_name,
+            'used_at': datetime.now().isoformat()
+        }).eq('code', code).execute()
+        
+        # Buscar saldo atual
+        user_data = supabase.table('users').select('balance').eq('id', user.id).execute()
+        current_balance = user_data.data[0]['balance'] if user_data.data else 0
+        
         await update.message.reply_text(
-            f"❌ Este código já foi usado!\n\n"
-            f"Usado por: {code_data.get('used_by_name', 'Desconhecido')}\n"
-            f"Data: {code_data.get('used_at', 'Desconhecida')[:19]}"
+            f"✅ Resgatado R$ {amount:.2f}!\n"
+            f"💰 Saldo atual: R$ {current_balance:.2f}"
         )
-        return
-    
-    # Verificar se expirou (opcional - 30 dias)
-    created_at = datetime.fromisoformat(code_data["created_at"])
-    days_since_creation = (datetime.now() - created_at).days
-    
-    if days_since_creation > 30:
-        await update.message.reply_text(
-            f"❌ Código expirado!\n\n"
-            f"Este código foi criado há {days_since_creation} dias e expirou após 30 dias."
-        )
-        return
-    
-    # Resgatar valor
-    amount = code_data["value"]
-    
-    # Atualizar saldo do usuário
-    update_balance(user.id, amount, "resgate", f"Código: {code}")
-    
-    # Marcar código como usado
-    codes[code]["used"] = True
-    codes[code]["used_by"] = user.id
-    codes[code]["used_by_name"] = user.first_name
-    codes[code]["used_at"] = datetime.now().isoformat()
-    save_json(CODES_FILE, codes)
-    
-    # Buscar saldo atualizado
-    users = load_json(USERS_FILE)
-    current_balance = users.get(str(user.id), {}).get("balance", 0)
-    
-    # Mensagem de sucesso
-    await update.message.reply_text(
-        f"✅ Código resgatado com sucesso!\n\n"
-        f"💰 Valor adicionado: R$ {amount:.2f}\n"
-        f"💵 Saldo atual: R$ {current_balance:.2f}\n\n"
-        f"🎉 Use /chk para verificar cartões!"
-    )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erro: {e}")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
