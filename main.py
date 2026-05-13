@@ -155,6 +155,19 @@ def create_pix_qrcode(amount, user_name="Cliente", user_document="00000000000"):
         print(f"[MisticPay] Erro: {e}")
         return {"success": False, "error": str(e)}
 
+    if response.status_code == 200 or response.status_code == 201:
+        data = response.json()
+        transaction_data = data.get("data", {})
+        
+        return {
+            "success": True,
+            "qr_code_base64": transaction_data.get("qrCodeBase64"),  # ← ESSE CAMPO
+            "qr_code": transaction_data.get("qrcodeUrl"),
+            "copy_paste": transaction_data.get("copyPaste"),
+            "transaction_id": transaction_data.get("transactionId"),
+            "amount": amount
+        }
+
 def check_pix_status(transaction_id):
     """Verifica status do PIX na MisticPay"""
     headers = {
@@ -242,12 +255,12 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ CPF inválido! Digite 11 números.")
             return
         
-        await update.message.reply_text(f"⏳ Gerando PIX de R$ {amount:.2f} para {payer_name}...")
+        await update.message.reply_text(f"⏳ Gerando PIX de R$ {amount:.2f}...")
         
         pix_data = create_pix_qrcode(amount, payer_name, payer_document)
         
         if not pix_data["success"]:
-            await update.message.reply_text(f"❌ Erro ao gerar PIX:\n{pix_data.get('error', 'Erro desconhecido')}")
+            await update.message.reply_text(f"❌ Erro: {pix_data.get('error', 'Erro desconhecido')}")
             return
         
         # Salvar transação pendente
@@ -262,61 +275,56 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_json(PENDING_PIX_FILE, pending_tx)
         
-        # Enviar QR Code (como foto)
-        if pix_data.get("qr_code_base64"):
-            import base64
-            from io import BytesIO
-            
-            # Extrair o base64 (remover "data:image/png;base64," se presente)
-            qr_base64 = pix_data["qr_code_base64"]
+        # ========= ENVIAR QR CODE COMO IMAGEM =========
+        import base64
+        from io import BytesIO
+        
+        # Pega o QR Code base64 da resposta
+        qr_base64 = pix_data.get("qr_code_base64", "")
+        
+        if qr_base64:
+            # Remove o prefixo "data:image/png;base64," se existir
             if ',' in qr_base64:
                 qr_base64 = qr_base64.split(',')[1]
             
+            # Decodifica base64 para bytes
             img_data = base64.b64decode(qr_base64)
             bio = BytesIO(img_data)
             
+            # Envia como foto
             await update.message.reply_photo(
                 photo=bio,
-                caption=f"✅ PIX Gerado com Sucesso!\n\n"
+                caption=f"✅ PIX Gerado!\n\n"
                        f"💰 Valor: R$ {amount:.2f}\n"
                        f"🆔 Transação: {pix_data['transaction_id']}\n\n"
                        f"⏰ Expira em 30 minutos"
             )
-        elif pix_data.get("qr_code"):
+        else:
+            # Fallback: gerar QR Code manualmente
+            img = qrcode.make(pix_data["copy_paste"])
+            bio = BytesIO()
+            img.save(bio, 'PNG')
+            bio.seek(0)
             await update.message.reply_photo(
-                photo=pix_data["qr_code"],
-                caption=f"✅ PIX Gerado!\n💰 Valor: R$ {amount:.2f}\n🆔 Transação: {pix_data['transaction_id']}"
+                photo=bio,
+                caption=f"✅ PIX Gerado!\n💰 Valor: R$ {amount:.2f}"
             )
         
-        # Enviar código copia e cola como arquivo .txt (já que é muito longo)
+        # ========= ENVIAR CÓDIGO COPIA E COLA COMO ARQUIVO =========
         copy_paste = pix_data.get("copy_paste", "")
         if copy_paste:
             import io
-            file_content = (
-                f"PIX Copia e Cola\n"
-                f"{'='*40}\n"
-                f"Valor: R$ {amount:.2f}\n"
-                f"Transação: {pix_data['transaction_id']}\n"
-                f"Pagador: {payer_name}\n"
-                f"CPF: {payer_document}\n"
-                f"{'='*40}\n\n"
-                f"{copy_paste}\n\n"
-                f"{'='*40}\n"
-                f"Este código expira em 30 minutos."
-            )
-            
+            file_content = f"PIX Copia e Cola - R$ {amount:.2f}\n\n{copy_paste}"
             file_io = io.BytesIO(file_content.encode('utf-8'))
             await update.message.reply_document(
                 document=file_io,
                 filename=f"pix_{pix_data['transaction_id']}.txt",
-                caption=f"📋 Código PIX Copia e Cola - R$ {amount:.2f}"
+                caption="📋 Clique para copiar o código PIX"
             )
         
-        # Iniciar verificação de pagamento
+        # Iniciar verificação
         asyncio.create_task(check_pix_payment(pix_data["transaction_id"], user.id, amount, context))
         
-    except ValueError as e:
-        await update.message.reply_text(f"❌ Valor inválido! Use /pix 10 'Nome' 12345678909")
     except Exception as e:
         await update.message.reply_text(f"❌ Erro: {str(e)[:100]}")
 
