@@ -411,6 +411,22 @@ def health_check():
 def run_flask():
     flask_app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 
+@flask_app.route('/pix_callback', methods=['POST'])
+def pix_callback():
+    """Webhook para receber confirmações de pagamento"""
+    data = request.json
+    print(f"[Webhook] Recebido: {data}")
+    
+    # Processar confirmação de pagamento
+    transaction_id = data.get("transactionId")
+    if transaction_id:
+        pending = load_json(PENDING_PIX_FILE)
+        if transaction_id in pending:
+            pending[transaction_id]["status"] = "paid"
+            save_json(PENDING_PIX_FILE, pending)
+    
+    return jsonify({"status": "ok"}), 200
+
 def main():
     print("🤖 Bot iniciando...")
     
