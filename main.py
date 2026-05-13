@@ -97,17 +97,15 @@ def check_card(card_data):
         return False, {"error": str(e)}
 
 # ========= FUNÇÕES MISTICPAY CORRIGIDAS =========
+
 def create_pix_qrcode(amount, user_name="Cliente", user_document="00000000000"):
-    """Gera QR Code PIX via MisticPay usando endpoint correto"""
-    print(f"[MisticPay] Criando PIX de R$ {amount}")
-    
+    """Gera QR Code PIX via MisticPay"""
     headers = {
         "ci": CLIENT_ID,
         "cs": CLIENT_SECRET,
         "Content-Type": "application/json"
     }
     
-    # Gera um ID único para a transação
     transaction_id = f"TX{int(time.time())}{random.randint(100, 999)}"
     
     payload = {
@@ -115,58 +113,34 @@ def create_pix_qrcode(amount, user_name="Cliente", user_document="00000000000"):
         "payerName": user_name,
         "payerDocument": user_document,
         "transactionId": transaction_id,
-        "description": f"Recarga de saldo - R$ {amount:.2f}",
-        "projectWebhook": "https://naomexer-602p.onrender.com/pix_callback"  # Opcional
+        "description": f"Recarga de saldo - R$ {amount:.2f}"
     }
-    
-    print(f"[MisticPay] Payload: {payload}")
     
     try:
         response = requests.post(
-            f"{BASE_URL}/transactions/create",  # Endpoint correto
+            f"{BASE_URL}/transactions/create",
             json=payload,
             headers=headers,
             timeout=30
         )
         
-        print(f"[MisticPay] Status: {response.status_code}")
-        print(f"[MisticPay] Resposta: {response.text}")
-        
-        if response.status_code == 200:
+        if response.status_code == 201:  # Note: 201, não 200
             data = response.json()
+            transaction_data = data.get("data", {})
             
-            if data.get("message") == "Transação criada com sucesso":
-                transaction_data = data.get("data", {})
-                
-                return {
-                    "success": True,
-                    "qr_code": transaction_data.get("qrCodeUrl"),
-                    "qr_code_base64": transaction_data.get("qrCodeBase64"),
-                    "copy_paste": transaction_data.get("copyPaste"),
-                    "transaction_id": transaction_data.get("transactionId"),
-                    "amount": amount
-                }
-            else:
-                return {"success": False, "error": data.get("message", "Erro desconhecido")}
+            return {
+                "success": True,
+                "qr_code_base64": transaction_data.get("qrCodeBase64"),
+                "qr_code_url": transaction_data.get("qrcodeUrl"),
+                "copy_paste": transaction_data.get("copyPaste"),
+                "transaction_id": transaction_data.get("transactionId"),
+                "amount": amount
+            }
         else:
-            return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+            return {"success": False, "error": f"HTTP {response.status_code}"}
             
     except Exception as e:
-        print(f"[MisticPay] Erro: {e}")
         return {"success": False, "error": str(e)}
-
-    if response.status_code == 200 or response.status_code == 201:
-        data = response.json()
-        transaction_data = data.get("data", {})
-        
-        return {
-            "success": True,
-            "qr_code_base64": transaction_data.get("qrCodeBase64"),  # ← ESSE CAMPO
-            "qr_code": transaction_data.get("qrcodeUrl"),
-            "copy_paste": transaction_data.get("copyPaste"),
-            "transaction_id": transaction_data.get("transactionId"),
-            "amount": amount
-        }
 
 def check_pix_status(transaction_id):
     """Verifica status do PIX na MisticPay"""
@@ -247,7 +221,7 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payer_name = context.args[1]
             payer_document = context.args[2]
         
-        # Remover aspas extras se houver
+        # Limpar dados
         payer_name = payer_name.strip('"').strip("'")
         payer_document = ''.join(filter(str.isdigit, payer_document))
         
@@ -257,6 +231,7 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(f"⏳ Gerando PIX de R$ {amount:.2f}...")
         
+        # Gerar PIX
         pix_data = create_pix_qrcode(amount, payer_name, payer_document)
         
         if not pix_data["success"]:
@@ -279,19 +254,17 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import base64
         from io import BytesIO
         
-        # Pega o QR Code base64 da resposta
         qr_base64 = pix_data.get("qr_code_base64", "")
         
         if qr_base64:
-            # Remove o prefixo "data:image/png;base64," se existir
+            # Remove o prefixo se existir
             if ',' in qr_base64:
                 qr_base64 = qr_base64.split(',')[1]
             
-            # Decodifica base64 para bytes
+            # Decodifica e envia como foto
             img_data = base64.b64decode(qr_base64)
             bio = BytesIO(img_data)
             
-            # Envia como foto
             await update.message.reply_photo(
                 photo=bio,
                 caption=f"✅ PIX Gerado!\n\n"
@@ -322,11 +295,17 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="📋 Clique para copiar o código PIX"
             )
         
-        # Iniciar verificação
+        # Iniciar verificação em background
         asyncio.create_task(check_pix_payment(pix_data["transaction_id"], user.id, amount, context))
         
+    except ValueError:
+        await update.message.reply_text("❌ Valor inválido! Use /pix 10 'Nome' 12345678909")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro: {str(e)[:100]}")
+        # Não enviar a mensagem de erro completa se for muito longa
+        error_msg = str(e)
+        if len(error_msg) > 100:
+            error_msg = "Erro interno. Tente novamente."
+        await update.message.reply_text(f"❌ {error_msg}")
 
 async def check_pix_payment(transaction_id, user_id, amount, context):
     await asyncio.sleep(10)
