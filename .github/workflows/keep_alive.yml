@@ -11,4 +11,4 @@ jobs:
     steps:
       - name: Ping bot to keep alive
         run: |
-          curl -s -o /dev/null "https://chkbot-0lqr.onrender.com/health"
+          curl -s -o /dev/null "https://naomexer-602p.onrender.com/health"
