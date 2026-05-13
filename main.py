@@ -10,7 +10,6 @@ import time
 import qrcode
 from io import BytesIO
 from datetime import datetime
-import asyncio
 
 # Importações corretas para python-telegram-bot v20+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,7 +17,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # ========= CONFIGURAÇÕES =========
 TELEGRAM_TOKEN = "8749925154:AAEJWRD7IGpULIvncMyDk-jusu5iPL6WJHE"
-ADMIN_ID = 8467946444  # Coloque seu ID do Telegram aqui
+ADMIN_ID = 8467946444  # Seu ID do Telegram
 
 # Configurações MisticPay
 CLIENT_ID = "ci_libdweclsjyry50"
@@ -27,7 +26,8 @@ AUTH_URL = "https://api.misticpay.com/v1/oauth/token"
 PIX_URL = "https://api.misticpay.com/v1/pix"
 
 # URLs da sua API de checkout
-CHECKOUT_API_URL = "http://localhost:8000/api.php"
+# ⚠️ ATENÇÃO: Esta URL precisa ser alterada quando você hospedar a API PHP
+CHECKOUT_API_URL = "https://seu-dominio.com/api_checkout_batch.php"
 
 # Arquivos de dados
 USERS_FILE = "users.json"
@@ -152,6 +152,7 @@ def get_access_token():
         token_cache["access_token"] = access_token
         token_cache["expires_at"] = time.time() + expires_in
         
+        print(f"[MisticPay] Token obtido com sucesso! Expira em {expires_in}s")
         return access_token
         
     except Exception as e:
@@ -167,7 +168,7 @@ def create_pix_qrcode(amount):
     payload = {
         "amount": amount,
         "description": f"Recarga de saldo - R$ {amount:.2f}",
-        "notification_url": "https://seuwebhook.com/pix_callback"  # Configure seu webhook
+        "notification_url": "https://seuwebhook.com/pix_callback"
     }
     
     headers = {
@@ -283,7 +284,6 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Salvar transação pendente
         pending_tx = load_json(PENDING_PIX_FILE)
         pending_tx[pix_data["transaction_id"]] = {
             "user_id": user.id,
@@ -302,7 +302,6 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏰ *O QR Code expira em 30 minutos*"
         )
         
-        # Enviar QR Code
         try:
             if pix_data["qr_code"].startswith("http"):
                 await update.message.reply_photo(
@@ -323,7 +322,6 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text(message, parse_mode='Markdown')
         
-        # Iniciar verificação de pagamento
         asyncio.create_task(check_pix_payment(pix_data["transaction_id"], user.id, amount, context))
         
     except ValueError:
@@ -333,7 +331,7 @@ async def check_pix_payment(transaction_id, user_id, amount, context):
     """Verifica pagamento PIX em background"""
     await asyncio.sleep(10)
     
-    for i in range(36):  # 30 minutos
+    for i in range(36):
         paid, _ = check_pix_status(transaction_id)
         
         if paid:
@@ -387,7 +385,6 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     update_balance(user.id, -cost, "check", f"Resultado: {'LIVE' if is_live else 'DIE'}")
     
-    # Atualizar estatísticas
     users = load_json(USERS_FILE)
     user_id_str = str(user.id)
     users[user_id_str]['total_checked'] += 1
@@ -480,6 +477,8 @@ async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=f"✅ {len(live_cards)} cartões LIVE encontrados!"
         )
         os.remove(output_file)
+    else:
+        await update.message.reply_text("❌ Nenhum cartão LIVE encontrado!")
 
 async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /resgatar + codigo"""
@@ -511,7 +510,7 @@ async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_json(CODES_FILE, codes)
     
     await update.message.reply_text(
-        f"✅ *Resgatado R$ {amount:.2f}!\n💰 Saldo: R$ {load_json(USERS_FILE)[str(user.id)]['balance']:.2f}",
+        f"✅ *Resgatado R$ {amount:.2f}!*\n💰 Saldo: R$ {load_json(USERS_FILE)[str(user.id)]['balance']:.2f}",
         parse_mode='Markdown'
     )
 
@@ -572,32 +571,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💳 *Verificar Cartão*\n\n`/chk NUMERO|MES|ANO|CVV|NOME|CPF`",
             parse_mode='Markdown'
         )
+    elif query.data == "file_check":
+        await query.edit_message_text(
+            f"📁 *Verificar Arquivo*\n\nEnvie um arquivo .txt com `/mchk`",
+            parse_mode='Markdown'
+        )
     elif query.data == "pix_recharge":
         await query.edit_message_text(
-            f"💸 *Recarregar*\n\n`/pix valor`\nMínimo: R$ 10,00",
+            f"💸 *Recarregar via PIX*\n\n`/pix valor`\nMínimo: R$ 10,00",
             parse_mode='Markdown'
         )
     elif query.data == "redeem":
         await query.edit_message_text(
-            f"🎫 *Resgatar*\n\n`/resgatar CODIGO`",
+            f"🎫 *Resgatar Código*\n\n`/resgatar CODIGO`",
             parse_mode='Markdown'
         )
 
-app = Flask(__name__)
+# ========= FLASK PARA KEEP ALIVE =========
+flask_app = Flask(__name__)
 
-@app.route('/health')
+@flask_app.route('/health')
 def health_check():
     """Endpoint para o UptimeRobot verificar se o bot está vivo"""
     return jsonify({'status': 'alive', 'message': 'Bot funcionando!'}), 200
 
 def run_flask():
     """Roda o servidor Flask em uma thread separada"""
-    app.run(host='0.0.0.0', port=8080)
+    flask_app.run(host='0.0.0.0', port=8080, debug=False)
 
 # ========= MAIN =========
 def main():
     """Função principal"""
     print("🤖 Bot iniciando...")
+    print(f"📁 Arquivos de dados serão salvos em: {os.getcwd()}")
     
     # Criar aplicação
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -611,12 +617,15 @@ def main():
     application.add_handler(CommandHandler("gerarcod", gerarcod_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Iniciar bot (apenas uma vez!)
+    print("✅ Bot pronto para uso!")
+    
+    # Iniciar bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     # Iniciar Flask em thread separada (KEEP ALIVE)
     threading.Thread(target=run_flask, daemon=True).start()
+    print("🌐 Servidor keep-alive rodando na porta 8080")
     
     # Iniciar o bot do Telegram
-    main()  # ← Chama a função main() apenas uma vez
+    main()
