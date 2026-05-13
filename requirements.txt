@@ -1,4 +1,6 @@
 python-telegram-bot==20.7
 requests==2.31.0
 qrcode==7.4.2
+pillow==10.4.0
 flask==3.0.3
+gunicorn==21.2.0
