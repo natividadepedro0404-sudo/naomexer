@@ -364,6 +364,137 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💵 Saldo: R$ {users[user_id_str]['balance']:.2f}"
     )
 
+async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /gerarcod + valor (APENAS ADMIN)"""
+    user = update.effective_user
+    
+    # Verificar se é admin
+    if user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Acesso negado! Apenas o administrador pode usar este comando.")
+        return
+    
+    # Verificar se forneceu o valor
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Uso correto: /gerarcod VALOR\n\n"
+            "Exemplo: /gerarcod 50\n\n"
+            "Gera um código de recarga com o valor especificado."
+        )
+        return
+    
+    try:
+        amount = float(context.args[0])
+        
+        if amount <= 0:
+            await update.message.reply_text("❌ Valor deve ser maior que zero!")
+            return
+        
+        # Gerar código aleatório de 20 caracteres
+        code = generate_code(20)
+        
+        # Carregar códigos existentes
+        codes = load_json(CODES_FILE)
+        
+        # Salvar novo código
+        codes[code] = {
+            "value": amount,
+            "created_by": user.id,
+            "created_by_name": user.first_name,
+            "created_at": datetime.now().isoformat(),
+            "used": False,
+            "used_by": None,
+            "used_at": None
+        }
+        save_json(CODES_FILE, codes)
+        
+        # Mostrar código para o admin
+        await update.message.reply_text(
+            f"✅ Código gerado com sucesso!\n\n"
+            f"💰 Valor: R$ {amount:.2f}\n"
+            f"🎫 Código: `{code}`\n\n"
+            f"📋 Instruções:\n"
+            f"1. Envie este código para o usuário\n"
+            f"2. O usuário deve usar: `/resgatar {code}`\n\n"
+            f"⚠️ O código só pode ser usado uma vez.",
+            parse_mode='Markdown'
+        )
+        
+    except ValueError:
+        await update.message.reply_text("❌ Valor inválido! Digite um número.")
+
+async def resgatar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /resgatar + codigo"""
+    user = update.effective_user
+    
+    # Verificar se forneceu o código
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Uso correto: /resgatar CODIGO\n\n"
+            "Exemplo: /resgatar aB3dE5fG7hI9jK1lM2nO\n\n"
+            "Resgata o valor de um código de recarga."
+        )
+        return
+    
+    code = context.args[0]
+    
+    # Carregar códigos
+    codes = load_json(CODES_FILE)
+    
+    # Verificar se código existe
+    if code not in codes:
+        await update.message.reply_text(
+            "❌ Código inválido!\n\n"
+            "Verifique o código e tente novamente."
+        )
+        return
+    
+    code_data = codes[code]
+    
+    # Verificar se já foi usado
+    if code_data.get("used", False):
+        await update.message.reply_text(
+            f"❌ Este código já foi usado!\n\n"
+            f"Usado por: {code_data.get('used_by_name', 'Desconhecido')}\n"
+            f"Data: {code_data.get('used_at', 'Desconhecida')[:19]}"
+        )
+        return
+    
+    # Verificar se expirou (opcional - 30 dias)
+    created_at = datetime.fromisoformat(code_data["created_at"])
+    days_since_creation = (datetime.now() - created_at).days
+    
+    if days_since_creation > 30:
+        await update.message.reply_text(
+            f"❌ Código expirado!\n\n"
+            f"Este código foi criado há {days_since_creation} dias e expirou após 30 dias."
+        )
+        return
+    
+    # Resgatar valor
+    amount = code_data["value"]
+    
+    # Atualizar saldo do usuário
+    update_balance(user.id, amount, "resgate", f"Código: {code}")
+    
+    # Marcar código como usado
+    codes[code]["used"] = True
+    codes[code]["used_by"] = user.id
+    codes[code]["used_by_name"] = user.first_name
+    codes[code]["used_at"] = datetime.now().isoformat()
+    save_json(CODES_FILE, codes)
+    
+    # Buscar saldo atualizado
+    users = load_json(USERS_FILE)
+    current_balance = users.get(str(user.id), {}).get("balance", 0)
+    
+    # Mensagem de sucesso
+    await update.message.reply_text(
+        f"✅ Código resgatado com sucesso!\n\n"
+        f"💰 Valor adicionado: R$ {amount:.2f}\n"
+        f"💵 Saldo atual: R$ {current_balance:.2f}\n\n"
+        f"🎉 Use /chk para verificar cartões!"
+    )
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -415,13 +546,21 @@ def pix_callback():
     return jsonify({"status": "ok"}), 200
 
 def main():
+    """Função principal"""
     print("🤖 Bot iniciando...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
+    # Comandos existentes
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("pix", pix_command))
     application.add_handler(CommandHandler("chk", chk_command))
+    application.add_handler(CommandHandler("mchk", mchk_command))
+    
+    # Novos comandos
+    application.add_handler(CommandHandler("gerarcod", gerarcod_command))  # Apenas admin
+    application.add_handler(CommandHandler("resgatar", resgatar_command))  # Todos usuários
+    
     application.add_handler(CallbackQueryHandler(button_callback))
     
     print("✅ Bot pronto!")
