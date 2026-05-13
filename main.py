@@ -22,7 +22,6 @@ ADMIN_ID = 8467946444  # Seu ID do Telegram
 # Configurações MisticPay
 CLIENT_ID = "ci_libdweclsjyry50"
 CLIENT_SECRET = "cs_kknlfy76fe2ir4nqjydf8ebee"
-AUTH_URL = "https://api.misticpay.com/v1/oauth/token"
 PIX_URL = "https://api.misticpay.com/v1/pix"
 
 # URLs da sua API de checkout
@@ -117,41 +116,6 @@ def check_card(card_data):
         return False, {"error": f"HTTP {response.status_code}"}
     except Exception as e:
         return False, {"error": str(e)}
-
-# ========= FUNÇÕES MISTICPAY =========
-def get_access_token():
-    """Obtém um novo token usando Client ID e Secret"""
-    global token_cache
-    
-    # Se o token ainda estiver válido, reaproveita
-    if token_cache["access_token"] and token_cache["expires_at"] > time.time():
-        return token_cache["access_token"]
-    
-    # Solicita novo token
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET
-    }
-    
-    try:
-        response = requests.post(AUTH_URL, data=data, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        token_data = response.json()
-        access_token = token_data.get("access_token")
-        expires_in = token_data.get("expires_in", 3600)
-        
-        token_cache["access_token"] = access_token
-        token_cache["expires_at"] = time.time() + expires_in
-        
-        print(f"[MisticPay] Token obtido com sucesso! Expira em {expires_in}s")
-        return access_token
-        
-    except Exception as e:
-        print(f"Erro na autenticação MisticPay: {e}")
-        return None
 
 def create_pix_qrcode(amount):
     """Gera QR Code PIX via MisticPay usando headers ci/cs"""
@@ -261,15 +225,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
-
 async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /pix + valor"""
     user = update.effective_user
     
     if not context.args:
         await update.message.reply_text(
-            "❌ *Uso correto:* `/pix 10`\n\nValor mínimo: R$ 10,00",
-            parse_mode='Markdown'
+            "❌ *Uso correto:* /pix 10\n\nValor mínimo: R$ 10,00",
+            parse_mode='Markdown'  # ← Este é o problema
         )
         return
     
