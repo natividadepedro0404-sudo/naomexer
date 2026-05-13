@@ -27,7 +27,7 @@ AUTH_URL = "https://api.misticpay.com/v1/oauth/token"
 PIX_URL = "https://api.misticpay.com/v1/pix"
 
 # URLs da sua API de checkout
-CHECKOUT_API_URL = "http://localhost:8000/api_checkout_batch.php"
+CHECKOUT_API_URL = "http://localhost:8000/api.php"
 
 # Arquivos de dados
 USERS_FILE = "users.json"
