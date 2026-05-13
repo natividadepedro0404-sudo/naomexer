@@ -789,8 +789,9 @@ def main():
     application.add_handler(CommandHandler("mchk", mchk_command))
     
     # Novos comandos
-    application.add_handler(CommandHandler("gerarcod", gerarcod_command))  # Apenas admin
-    application.add_handler(CommandHandler("resgatar", resgatar_command))  # Todos usuários
+    application.add_handler(CommandHandler("gerarcod", gerarcod_command))
+    application.add_handler(CommandHandler("resgatar", resgatar_command))
+    application.add_handler(CommandHandler("saldo", saldo_command))
     
     application.add_handler(CallbackQueryHandler(button_callback))
     
