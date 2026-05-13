@@ -588,7 +588,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ========= FLASK PARA KEEP ALIVE =========
-flask_app = Flask(__name__)  # ← Esta linha JÁ EXISTE no seu código
+flask_app = Flask(__name__)
 
 @flask_app.route('/health')
 def health_check():
@@ -597,14 +597,14 @@ def health_check():
 
 def run_flask():
     """Roda o servidor Flask em uma thread separada"""
-    flask_app.run(host='0.0.0.0', port=8080, debug=False)
+    flask_app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 
 # ========= MAIN =========
 def main():
     """Função principal do bot"""
     print("🤖 Bot iniciando...")
     
-    # Criar aplicação
+    # Criar aplicação do Telegram
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
     # Adicionar handlers
@@ -618,17 +618,18 @@ def main():
     
     print("✅ Bot pronto para uso!")
     
-    # Iniciar bot (NÃO usar run_polling com Gunicorn)
+    # Iniciar bot (isso é BLOQUEANTE - fica rodando para sempre)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# ⚠️ IMPORTANTE: Quando usar Gunicorn, NÃO iniciar o bot aqui diretamente
-# O Gunicorn vai importar este arquivo e procurar por 'flask_app'
-
 if __name__ == "__main__":
-    # Quando executado diretamente (python3 main.py)
-    # Iniciar Flask em thread separada
-    threading.Thread(target=run_flask, daemon=True).start()
+    # Iniciar Flask em thread separada (para keep-alive)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     print("🌐 Servidor keep-alive rodando na porta 8080")
     
-    # Iniciar o bot do Telegram
+    # Aguardar 2 segundos para o Flask iniciar
+    import time
+    time.sleep(2)
+    
+    # Iniciar o bot do Telegram (isso vai rodar para sempre)
     main()
