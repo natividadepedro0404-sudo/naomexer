@@ -27,7 +27,7 @@ PIX_URL = "https://api.misticpay.com/v1/pix"
 
 # URLs da sua API de checkout
 # ⚠️ ATENÇÃO: Esta URL precisa ser alterada quando você hospedar a API PHP
-CHECKOUT_API_URL = "https://seu-dominio.com/api_checkout_batch.php"
+CHECKOUT_API_URL = "https://naomexer-602p.onrender.com/api.php"
 
 # Arquivos de dados
 USERS_FILE = "users.json"
