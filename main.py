@@ -588,7 +588,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ========= FLASK PARA KEEP ALIVE =========
-flask_app = Flask(__name__)
+flask_app = Flask(__name__)  # ← Esta linha JÁ EXISTE no seu código
 
 @flask_app.route('/health')
 def health_check():
@@ -601,9 +601,8 @@ def run_flask():
 
 # ========= MAIN =========
 def main():
-    """Função principal"""
+    """Função principal do bot"""
     print("🤖 Bot iniciando...")
-    print(f"📁 Arquivos de dados serão salvos em: {os.getcwd()}")
     
     # Criar aplicação
     application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -619,11 +618,15 @@ def main():
     
     print("✅ Bot pronto para uso!")
     
-    # Iniciar bot
+    # Iniciar bot (NÃO usar run_polling com Gunicorn)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+# ⚠️ IMPORTANTE: Quando usar Gunicorn, NÃO iniciar o bot aqui diretamente
+# O Gunicorn vai importar este arquivo e procurar por 'flask_app'
+
 if __name__ == "__main__":
-    # Iniciar Flask em thread separada (KEEP ALIVE)
+    # Quando executado diretamente (python3 main.py)
+    # Iniciar Flask em thread separada
     threading.Thread(target=run_flask, daemon=True).start()
     print("🌐 Servidor keep-alive rodando na porta 8080")
     
