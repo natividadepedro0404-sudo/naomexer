@@ -3,4 +3,7 @@ requests==2.31.0
 qrcode==7.4.2
 pillow==10.4.0
 flask==3.0.3
-supabase
+supabase==1.0.3
+gotrue==1.0.3
+realtime==1.0.2
+postgrest==0.13.0
