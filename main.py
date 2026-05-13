@@ -364,6 +364,145 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💵 Saldo: R$ {users[user_id_str]['balance']:.2f}"
     )
 
+async def mchk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /mchk + arquivo .txt - Verifica múltiplos cartões"""
+    user = update.effective_user
+    
+    # Verificar se o usuário enviou um arquivo
+    if not update.message.document:
+        await update.message.reply_text(
+            "❌ Uso correto: Envie um arquivo .txt junto com o comando /mchk\n\n"
+            "O arquivo deve conter um cartão por linha no formato:\n"
+            "NUMERO|MES|ANO|CVV|NOME|CPF\n\n"
+            "Exemplo:\n"
+            "5158940282614474|05|2030|138|Iracema Godoi|08855932780\n"
+            "5453681033927680|03|2032|689|Maria Silva|12345678900"
+        )
+        return
+    
+    # Verificar se o arquivo é .txt
+    file_name = update.message.document.file_name
+    if not file_name.endswith('.txt'):
+        await update.message.reply_text("❌ Por favor, envie um arquivo .txt")
+        return
+    
+    # Baixar o arquivo
+    await update.message.reply_text("📥 Baixando arquivo...")
+    file = await update.message.document.get_file()
+    file_path = f"temp_{user.id}_{int(time.time())}.txt"
+    await file.download_to_drive(file_path)
+    
+    # Ler cartões do arquivo
+    with open(file_path, 'r', encoding='utf-8') as f:
+        cards = [line.strip() for line in f if line.strip()]
+    
+    os.remove(file_path)  # Remove arquivo temporário
+    
+    if not cards:
+        await update.message.reply_text("❌ Arquivo vazio ou formato inválido!")
+        return
+    
+    # Verificar saldo do usuário
+    user_data = init_user(user.id, user.username, user.first_name)
+    
+    if user_data['balance'] < 0.5:
+        await update.message.reply_text(
+            f"❌ Saldo insuficiente!\n\n"
+            f"💰 Seu saldo: R$ {user_data['balance']:.2f}\n"
+            f"💸 Necessário mínimo: R$ 0.50\n\n"
+            f"Use /pix para recarregar."
+        )
+        return
+    
+    # Mensagem de progresso
+    msg = await update.message.reply_text(
+        f"📁 Processando {len(cards)} cartões...\n"
+        f"💰 Saldo atual: R$ {user_data['balance']:.2f}\n\n"
+        f"⚡ Iniciando verificação..."
+    )
+    
+    live_cards = []
+    processed = 0
+    total_cost = 0
+    
+    for i, card in enumerate(cards):
+        # Verificar saldo antes de cada verificação
+        current_user = load_json(USERS_FILE).get(str(user.id), {})
+        if current_user.get('balance', 0) < 0.5:
+            await msg.edit_text(
+                f"⛔ Processamento interrompido!\n\n"
+                f"💰 Saldo insuficiente: R$ {current_user.get('balance', 0):.2f}\n"
+                f"✅ Processados: {processed}/{len(cards)}\n"
+                f"🎯 Live encontrados: {len(live_cards)}\n"
+                f"💸 Total gasto: R$ {total_cost:.2f}"
+            )
+            break
+        
+        # Verificar cartão
+        is_live, result = check_card(card)
+        cost = 1.0 if is_live else 0.5
+        total_cost += cost
+        
+        # Atualizar saldo
+        update_balance(user.id, -cost, "bulk_check", f"Cartão {i+1}: {'LIVE' if is_live else 'DIE'}")
+        
+        if is_live:
+            live_cards.append(card)
+        
+        processed += 1
+        
+        # Atualizar estatísticas
+        users = load_json(USERS_FILE)
+        user_id_str = str(user.id)
+        if user_id_str in users:
+            users[user_id_str]['total_checked'] = users[user_id_str].get('total_checked', 0) + 1
+            if is_live:
+                users[user_id_str]['live_checks'] = users[user_id_str].get('live_checks', 0) + 1
+            else:
+                users[user_id_str]['die_checks'] = users[user_id_str].get('die_checks', 0) + 1
+            save_json(USERS_FILE, users)
+        
+        # Atualizar mensagem a cada 10 cartões
+        if (i + 1) % 10 == 0 or (i + 1) == len(cards):
+            current_balance = load_json(USERS_FILE).get(str(user.id), {}).get('balance', 0)
+            await msg.edit_text(
+                f"📁 Processando arquivo...\n\n"
+                f"📊 Progresso: {processed}/{len(cards)}\n"
+                f"✅ Live encontrados: {len(live_cards)}\n"
+                f"💰 Saldo restante: R$ {current_balance:.2f}\n"
+                f"💸 Total gasto: R$ {total_cost:.2f}\n\n"
+                f"🔄 Continuando..."
+            )
+        
+        # Delay para não sobrecarregar
+        await asyncio.sleep(0.5)
+    
+    # Gerar arquivo com cartões LIVE
+    if live_cards:
+        output_file = f"live_cards_{user.id}_{int(time.time())}.txt"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(live_cards))
+        
+        # Enviar arquivo
+        current_balance = load_json(USERS_FILE).get(str(user.id), {}).get('balance', 0)
+        await update.message.reply_document(
+            document=open(output_file, 'rb'),
+            filename=f"live_cards_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            caption=f"✅ {len(live_cards)} cartões LIVE encontrados!\n\n"
+                   f"📊 Total processados: {processed}\n"
+                   f"💰 Saldo final: R$ {current_balance:.2f}\n"
+                   f"💸 Total gasto: R$ {total_cost:.2f}"
+        )
+        os.remove(output_file)
+    else:
+        current_balance = load_json(USERS_FILE).get(str(user.id), {}).get('balance', 0)
+        await update.message.reply_text(
+            f"❌ Nenhum cartão LIVE encontrado!\n\n"
+            f"📊 Total processados: {processed}\n"
+            f"💰 Saldo final: R$ {current_balance:.2f}\n"
+            f"💸 Total gasto: R$ {total_cost:.2f}"
+        )
+
 async def gerarcod_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /gerarcod + valor (APENAS ADMIN)"""
     user = update.effective_user
