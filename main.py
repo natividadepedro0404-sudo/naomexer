@@ -210,7 +210,6 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /pix + valor + nome + cpf"""
     user = update.effective_user
     
-    # Verificar se o usuário forneceu valor, nome e CPF
     if len(context.args) < 3:
         await update.message.reply_text(
             "❌ Uso correto: /pix 10 NOME CPF\n\n"
@@ -226,10 +225,8 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Valor mínimo é R$ 10,00")
             return
         
-        # Extrair nome (pode ter espaços)
-        cpf_index = 2
+        # Extrair nome e CPF
         if len(context.args) > 3:
-            # Nome com espaços
             name_parts = context.args[1:-1]
             payer_name = ' '.join(name_parts)
             payer_document = context.args[-1]
@@ -237,19 +234,15 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payer_name = context.args[1]
             payer_document = context.args[2]
         
-        # Validar CPF (deve ser apenas números)
+        # Remover aspas extras se houver
+        payer_name = payer_name.strip('"').strip("'")
         payer_document = ''.join(filter(str.isdigit, payer_document))
         
         if len(payer_document) != 11:
             await update.message.reply_text("❌ CPF inválido! Digite 11 números.")
             return
         
-        await update.message.reply_text(
-            f"⏳ Gerando QR Code PIX...\n"
-            f"💰 Valor: R$ {amount:.2f}\n"
-            f"👤 Pagador: {payer_name}\n"
-            f"📄 Documento: {payer_document}"
-        )
+        await update.message.reply_text(f"⏳ Gerando PIX de R$ {amount:.2f} para {payer_name}...")
         
         pix_data = create_pix_qrcode(amount, payer_name, payer_document)
         
@@ -269,43 +262,63 @@ async def pix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_json(PENDING_PIX_FILE, pending_tx)
         
-        message = (
-            f"💳 PIX Gerado com Sucesso!\n\n"
-            f"💰 Valor: R$ {amount:.2f}\n"
-            f"🆔 Transação: {pix_data['transaction_id']}\n\n"
-            f"📱 Código PIX (Copia e Cola):\n"
-            f"`{pix_data['copy_paste']}`\n\n"
-            f"⏰ O QR Code expira em 30 minutos"
-        )
-        
-        # Enviar QR Code (se tiver URL)
-        if pix_data.get("qr_code"):
-            await update.message.reply_photo(
-                photo=pix_data["qr_code"],
-                caption=message
-            )
-        elif pix_data.get("qr_code_base64"):
-            # Se vier base64, enviar como foto
+        # Enviar QR Code (como foto)
+        if pix_data.get("qr_code_base64"):
             import base64
             from io import BytesIO
-            img_data = base64.b64decode(pix_data["qr_code_base64"].split(',')[1] if ',' in pix_data["qr_code_base64"] else pix_data["qr_code_base64"])
+            
+            # Extrair o base64 (remover "data:image/png;base64," se presente)
+            qr_base64 = pix_data["qr_code_base64"]
+            if ',' in qr_base64:
+                qr_base64 = qr_base64.split(',')[1]
+            
+            img_data = base64.b64decode(qr_base64)
             bio = BytesIO(img_data)
-            await update.message.reply_photo(photo=bio, caption=message)
-        else:
-            # Fallback: gerar QR Code manualmente
-            img = qrcode.make(pix_data["copy_paste"])
-            bio = BytesIO()
-            img.save(bio, 'PNG')
-            bio.seek(0)
-            await update.message.reply_photo(photo=bio, caption=message)
+            
+            await update.message.reply_photo(
+                photo=bio,
+                caption=f"✅ PIX Gerado com Sucesso!\n\n"
+                       f"💰 Valor: R$ {amount:.2f}\n"
+                       f"🆔 Transação: {pix_data['transaction_id']}\n\n"
+                       f"⏰ Expira em 30 minutos"
+            )
+        elif pix_data.get("qr_code"):
+            await update.message.reply_photo(
+                photo=pix_data["qr_code"],
+                caption=f"✅ PIX Gerado!\n💰 Valor: R$ {amount:.2f}\n🆔 Transação: {pix_data['transaction_id']}"
+            )
+        
+        # Enviar código copia e cola como arquivo .txt (já que é muito longo)
+        copy_paste = pix_data.get("copy_paste", "")
+        if copy_paste:
+            import io
+            file_content = (
+                f"PIX Copia e Cola\n"
+                f"{'='*40}\n"
+                f"Valor: R$ {amount:.2f}\n"
+                f"Transação: {pix_data['transaction_id']}\n"
+                f"Pagador: {payer_name}\n"
+                f"CPF: {payer_document}\n"
+                f"{'='*40}\n\n"
+                f"{copy_paste}\n\n"
+                f"{'='*40}\n"
+                f"Este código expira em 30 minutos."
+            )
+            
+            file_io = io.BytesIO(file_content.encode('utf-8'))
+            await update.message.reply_document(
+                document=file_io,
+                filename=f"pix_{pix_data['transaction_id']}.txt",
+                caption=f"📋 Código PIX Copia e Cola - R$ {amount:.2f}"
+            )
         
         # Iniciar verificação de pagamento
         asyncio.create_task(check_pix_payment(pix_data["transaction_id"], user.id, amount, context))
         
     except ValueError as e:
-        await update.message.reply_text(f"❌ Erro: {e}\n\nUso: /pix 10 'Nome do Pagador' 12345678909")
+        await update.message.reply_text(f"❌ Valor inválido! Use /pix 10 'Nome' 12345678909")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro inesperado: {e}")
+        await update.message.reply_text(f"❌ Erro: {str(e)[:100]}")
 
 async def check_pix_payment(transaction_id, user_id, amount, context):
     await asyncio.sleep(10)
